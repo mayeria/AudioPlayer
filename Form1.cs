@@ -1,64 +1,66 @@
-﻿using System;
+﻿using AudioPlayerSerwatko;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Media;
 using System.Windows.Forms;
+using NAudio.Wave;
+using System.Drawing;
+using Spectrogram;
 
 namespace AudioPlayer
 {
     public partial class Form1 : Form
     {
-        private SoundPlayer player;
-        bool async = true, playlista = false;
-        string[] plikiSystem;
-        string utwor;
-        List<int> losowe = new List<int>(); List<string> plikiPlaylista = new List<string>();
+        public bool playlista = false, mouseDown = false, loop = false, loopPlaylist = false, shuffle = false, last = false, stop = false, next = false, prev = false, click = false;
+
+        public WaveOutEvent outputDevice;
+        private AudioFileReader audioFile, playlistTime, remainingAudioFile;
+
+        int totalPlaylist, remaining, trackbarvalue1, trackbarvalue2;
+
+        public string utwor;
+        List<int> losowe = new List<int>(); public List<string> plikiPlaylista = new List<string>();
+
+        SpectrogramGenerator sg;
+
+        System.Windows.Forms.Form fu = System.Windows.Forms.Application.OpenForms["FormURL"];
+        System.Windows.Forms.Form fs = System.Windows.Forms.Application.OpenForms["FormSystemPlikow"];
+        System.Windows.Forms.Form fe = System.Windows.Forms.Application.OpenForms["FormEditPlaylist"];
 
         public Form1()
         {
             InitializeComponent();
-            toolStripStatusLabel1.Text = "";
-            player = new SoundPlayer();
-            label2.Text = "Odtwarzanie asynchroniczne";
-        }
-
-        private void ButtonOdtworz_Click(object sender, EventArgs e)
-        {
-            if (panelOdtworz.Visible)
-                panelOdtworz.Visible = false;
-            else
-                panelOdtworz.Visible = true;
-            panelSystem.Visible = false; panelUrl.Visible = false; panelHistoria.Visible = false;
-        }
-
-        private void ButtonPlaylista_Click(object sender, EventArgs e)
-        {
-            panelHistoria.Visible = false; panelSystem.Visible = false; panelUrl.Visible = false;
-            if (panelOdtworz.Visible)
-                panelOdtworz.Visible = false;
-            else
-            {
-                panelOdtworz.Visible = true;
-                playlista = true;
-            }
-        }
-
-        private void ButtonMenu_Click(object sender, EventArgs e)
-        {
-            panelOdtworz.Visible = false; panelSystem.Visible = false; panelUrl.Visible = false; panelHistoria.Visible = false;
-            if (panelMenu.Visible)
-                panelMenu.Visible = false;
-            else
-                panelMenu.Visible = true;
+            toolStripStatusLabelName.Text = "";
+            this.FormClosing += ButtonStop_Click;
         }
 
         private void ListBoxPlaylista_SelectedIndexChanged(object sender, EventArgs e)
         {
+            if (listBoxPlaylista.SelectedItem != null && click)
+            {
+                trackBar1.Value = 0;
+                if (outputDevice != null)
+                {
+                    outputDevice.Dispose();
+                    outputDevice = null;
+                    audioFile.Dispose();
+                    audioFile = null;
+                    timer1.Stop();
+                }
+                utwor = plikiPlaylista[listBoxPlaylista.SelectedIndex];
+                toolStripStatusLabelName.Text = Path.GetFileName(utwor);
+                buttonStart.PerformClick();
+                click = false;
+            }
+        }
+
+        private void listBoxPlaylista_Click(object sender, EventArgs e)
+        {
             if (listBoxPlaylista.SelectedItem != null)
             {
-                utwor = plikiPlaylista[listBoxPlaylista.SelectedIndex];
-                toolStripStatusLabel1.Text = Path.GetFileName(utwor);
+                click = true;
             }
         }
 
@@ -66,16 +68,63 @@ namespace AudioPlayer
         {
             try
             {
-                player.SoundLocation = utwor;
-                if (async)
-                    player.Play();
-                else
-                    player.PlaySync();
-
-                if (toolStripStatusLabel1.Text != "")
+                if (utwor != null)
                 {
-                    listBoxHistoria.Items.Add(toolStripStatusLabel1.Text);
-                    listBoxHistoria.SelectedIndex = listBoxHistoria.Items.Count - 1;
+                    stop = false;
+                    if (listBoxPlaylista.Items.Count != 0 && listBoxPlaylista.SelectedItem == null)
+                        listBoxPlaylista.SelectedIndex = 0;
+                    if (outputDevice == null)
+                    {
+                        outputDevice = new WaveOutEvent();
+                        outputDevice.PlaybackStopped += PlaybackStopped;
+                    }
+                    if (audioFile == null)
+                    {
+                        audioFile = new AudioFileReader(utwor);
+                        outputDevice.Init(audioFile);
+                    }
+                    if (buttonStart.Text == "▶️")
+                    {
+                        buttonStart.Text = "||";
+                        pictureBox1.Image = null;
+                        outputDevice.Play();
+                        labelTotalTime.Text = audioFile.TotalTime.ToString(@"m\:ss");
+                        toolStripStatusLabelDuration.Text = labelTotalTime.Text;
+                        timer1.Start();
+                        trackBar1.Maximum = Convert.ToInt32(audioFile.TotalTime.TotalMilliseconds);
+
+                        if (toolStripStatusLabelName.Text != "")
+                        {
+                            listBoxHistoria.Items.Add(toolStripStatusLabelName.Text);
+                            listBoxHistoria.SelectedIndex = listBoxHistoria.Items.Count - 1;
+                        }
+
+                        var tagFile = TagLib.File.Create(utwor);
+                        labelName.Text = tagFile.Tag.FirstPerformer + " - " + tagFile.Tag.Title;
+                        double length = new System.IO.FileInfo(utwor).Length * 0.000001;
+                        toolStripStatusLabelSize.Text = string.Format("{0:0.0}", Math.Truncate(length * 10) / 10) + "MB";
+                        toolStripStatusLabelAlbum.Text = tagFile.Tag.Album;
+                        toolStripStatusLabelGenre.Text = tagFile.Tag.FirstGenre;
+
+                        try
+                        {
+                            MemoryStream ms = new MemoryStream(tagFile.Tag.Pictures[0].Data.Data);
+                            System.Drawing.Image image = System.Drawing.Image.FromStream(ms);
+                            pictureBox1.Image = image;
+                        }
+                        catch { }
+
+                        try
+                        {
+                            waveViewer1.WaveStream = new NAudio.Wave.WaveFileReader(utwor);
+                        }
+                        catch { }
+                    }
+                    else
+                    {
+                        buttonStart.Text = "▶️";
+                        outputDevice.Pause();
+                    }
                 }
             }
             catch(Exception ex)
@@ -84,87 +133,151 @@ namespace AudioPlayer
             }
         }
 
+        private void PlaybackStopped(object sender, StoppedEventArgs args)
+        {
+            buttonStart.Text = "▶️";
+            if (!prev && !next && !click)
+            {
+                trackBar1.Value = 0;
+                outputDevice.Dispose();
+                outputDevice = null;
+                audioFile.Dispose();
+                audioFile = null;
+                timer1.Stop();
+                if (!stop)
+                {
+                    if (listBoxPlaylista.Items != null && listBoxPlaylista.SelectedIndex != listBoxPlaylista.Items.Count - 1 && !shuffle && !loop)
+                    {
+                        listBoxPlaylista.SelectedIndex += 1;
+                        buttonStart.PerformClick();
+                    }
+                    if (loop)
+                        buttonStart.PerformClick();
+                    if (loopPlaylist)
+                    {
+                        if (listBoxPlaylista.SelectedIndex == listBoxPlaylista.Items.Count - 1)
+                        {
+                            if (last)
+                            {
+                                listBoxPlaylista.SelectedIndex = 0;
+                                buttonStart.PerformClick();
+                                Remaining();
+                                last = false;
+                            }
+                            else
+                            {
+                                last = true;
+                            }
+
+                        }
+                    }
+                    if (shuffle && !loop)
+                    {
+                        var rand = new Random();
+                        if (losowe.Count == 0)
+                            losowe = Enumerable.Range(0, listBoxPlaylista.Items.Count).ToList();
+                        int index = rand.Next(0, losowe.Count);
+                        listBoxPlaylista.SelectedIndex = losowe[index];
+                        losowe.RemoveAt(index);
+                        buttonStart.PerformClick();
+                    }
+                }
+            }
+            prev = false; next = false;
+        }
+
         private void ButtonPetla_Click(object sender, EventArgs e)
         {
-            player.SoundLocation = utwor;
-            player.PlayLooping();
+            if (buttonPetla.Text == "🔂" && buttonPetla.ForeColor == Color.DarkGray)
+            {
+                loop = true;
+                buttonPetla.ForeColor = Color.RoyalBlue;
+            }
+            else if (buttonPetla.Text == "🔁")
+            {
+                loopPlaylist = false;
+                buttonPetla.ForeColor = Color.DarkGray;
+                buttonPetla.Text = "🔂";
+                labelPlaylistRemaining.Text = "";
+                label2.Text = "";
+            }
+            else
+            {
+                loop = false;
+                loopPlaylist = true;
+                buttonPetla.Text = "🔁";
+                remaining = totalPlaylist;
+                label2.Text = "-";
+            }
         }
 
         private void ButtonPoprzedni_Click(object sender, EventArgs e)
         {
-            if(listBoxPlaylista.SelectedItem == null)
+            prev = true;
+            trackBar1.Value = 0;
+            if (outputDevice != null && audioFile != null)
             {
-                if (listBoxHistoria.SelectedIndex >= 1)
-                {
-                    listBoxHistoria.SelectedIndex--;
-                    utwor = listBoxHistoria.SelectedItem.ToString();
-                    toolStripStatusLabel1.Text = Path.GetFileName(utwor);
-                    try
-                    {
-                        player.SoundLocation = utwor;
-                        if (async)
-                            player.Play();
-                        else
-                            player.PlaySync();
-                        listBoxHistoria.Items.Add(toolStripStatusLabel1.Text);
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show(ex.Message, "Błąd podczas odtwarzania");
-                    }
-                }
+                outputDevice.Dispose();
+                outputDevice = null;
+                audioFile.Dispose();
+                audioFile = null;
+                timer1.Stop();
             }
-            else
-            {
-                if (listBoxPlaylista.SelectedIndex > 0)
+                if (listBoxPlaylista.SelectedItem == null)
                 {
-                    listBoxPlaylista.SelectedIndex--;
-                    buttonStart.PerformClick();
+                    if (listBoxHistoria.SelectedIndex >= 1)
+                    {
+                        listBoxHistoria.SelectedIndex--;
+                        utwor = listBoxHistoria.SelectedItem.ToString();
+                        toolStripStatusLabelName.Text = Path.GetFileName(utwor);
+                        try
+                        {
+                            buttonStart.PerformClick();
+                            listBoxHistoria.Items.Add(toolStripStatusLabelName.Text);
+                        }
+                        catch (Exception ex)
+                        {
+                            MessageBox.Show(ex.Message, "Błąd podczas odtwarzania");
+                        }
+                    }
                 }
                 else
                 {
-                    listBoxPlaylista.SelectedIndex = 0;
-                    buttonStart.PerformClick();
+                    if (listBoxPlaylista.SelectedIndex > 0)
+                    {
+                        listBoxPlaylista.SelectedIndex--;
+                        buttonStart.PerformClick();
+                    }
+                    else
+                    {
+                        listBoxPlaylista.SelectedIndex = 0;
+                        buttonStart.PerformClick();
+                    }
                 }
-            }
-        }
-
-        private void ButtonHistoria_Click(object sender, EventArgs e)
-        {
-            panelOdtworz.Visible = false; panelSystem.Visible = false; panelUrl.Visible = false;
-            if (panelHistoria.Visible)
-                panelHistoria.Visible = false;
-            else
-                panelHistoria.Visible = true;
         }
 
         private void ButtonStop_Click(object sender, EventArgs e)
         {
-            player.Stop();
+            outputDevice?.Stop();
+            stop = true;
         }
 
         private void ButtonNastepny_Click(object sender, EventArgs e)
         {
+            next = true;
+            trackBar1.Value = 0;
+            if (outputDevice != null)
+            {
+                outputDevice.Dispose();
+                outputDevice = null;
+                audioFile.Dispose();
+                audioFile = null;
+            }
             if (listBoxPlaylista.SelectedItem != null && listBoxPlaylista.SelectedIndex != listBoxPlaylista.Items.Count - 1)
             {
+                timer1.Stop();
                 listBoxPlaylista.SelectedIndex++;
                 buttonStart.PerformClick();
-            }
-        }
-
-        private void ButtonSyncAsync_Click(object sender, EventArgs e)
-        {
-            if(buttonSyncAsync.Text == "Odtwórz synchronicznie")
-            {
-                buttonSyncAsync.Text = "Odtwórz asynchronicznie";
-                async = false;
-                label2.Text = "Odtwarzanie synchroniczne";
-            }
-            else
-            {
-                buttonSyncAsync.Text = "Odtwórz synchronicznie";
-                async = true;
-                label2.Text = "Odtwarzanie asynchroniczne";
             }
         }
 
@@ -188,20 +301,39 @@ namespace AudioPlayer
             listBoxHistoria.Items.Clear();
         }
 
-        private void ButtonFileDialog_Click(object sender, EventArgs e)
+        private void ButtonLosowo_Click(object sender, EventArgs e)
         {
-            panelUrl.Visible = false; panelSystem.Visible = false; panelHistoria.Visible = false; panelMenu.Visible = false; panelOdtworz.Visible = false;
+            if (shuffle)
+            {
+                buttonLosowo.ForeColor = Color.DarkGray;
+                shuffle = false;
+            }
+            else
+            {
+                buttonLosowo.ForeColor = Color.RoyalBlue;
+                shuffle = true;
+            }
+        }
+
+        private void Form1_Click(object sender, EventArgs e)
+        {
+            listBoxPlaylista.ClearSelected();
+        }
+
+        private void openFileDialogToolStripMenuItem_Click(object sender, EventArgs e)
+        {
             try
             {
                 if (openFileDialog1.ShowDialog() == DialogResult.OK)
                 {
                     utwor = openFileDialog1.FileName;
-                    toolStripStatusLabel1.Text = Path.GetFileName(utwor);
-                    panelOdtworz.Visible = false;
+                    toolStripStatusLabelName.Text = Path.GetFileName(utwor);
                     if (playlista)
                     {
-                        listBoxPlaylista.Items.Add(toolStripStatusLabel1.Text);
+                        listBoxPlaylista.Items.Add(toolStripStatusLabelName.Text);
                         plikiPlaylista.Add(utwor);
+                        tabControlOdtwarzanie.SelectedIndex = 1;
+                        playlistChanged();
                     }
                     else
                         buttonStart.PerformClick();
@@ -214,102 +346,153 @@ namespace AudioPlayer
             }
         }
 
-        private void ButtonSystem_Click(object sender, EventArgs e)
+        private void zURLToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            panelUrl.Visible = false; panelHistoria.Visible = false;
-            if (panelSystem.Visible)
-                panelSystem.Visible = false;
-            else
+            fu = new FormURL();
+            fu.Show();
+        }
+
+        private void zOToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            playlista = true;
+            openFileDialogToolStripMenuItem.PerformClick();
+        }
+
+        private void zURLToolStripMenuItem1_Click(object sender, EventArgs e)
+        {
+            playlista = true;
+            zURLToolStripMenuItem.PerformClick();
+        }
+
+        private void zSystemuPlikówToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            fs = new FormSystemPlikow();
+            fs.Show();
+        }
+
+        private void buttonSpectrogram_Click(object sender, EventArgs e)
+        {
+            (double[] audio, int sampleRate) = ReadWavMono(utwor);
+            var sg = new SpectrogramGenerator(sampleRate, fftSize: 4096, stepSize: 500, maxFreq: 3000);
+            sg.Add(audio);
+            Bitmap bmp = sg.GetBitmapMel(250);
+            pictureBox2.Image = sg.GetBitmap();
+        }
+
+        private void zSystemuPlikówToolStripMenuItem1_Click(object sender, EventArgs e)
+        {
+            playlista = true;
+            zSystemuPlikówToolStripMenuItem.PerformClick();
+        }
+
+        private void buttonRewind_Click(object sender, EventArgs e)
+        {
+            if (audioFile != null)
             {
-                panelSystem.Visible = true;
-                plikiSystem = Directory.GetFiles(@"C:\");
-                foreach (string name in plikiSystem)
+                audioFile.Skip(-5);
+            }
+        }
+
+        private void buttonEditPlaylist_Click(object sender, EventArgs e)
+        {
+            timer1.Stop();
+            if (outputDevice != null)
+                outputDevice.Pause();
+            fe = new FormEditPlaylist();
+            fe.Show();
+        }
+
+        private void buttonForward_Click(object sender, EventArgs e)
+        {
+            if (audioFile != null)
+            {
+                audioFile.Skip(5);
+            }
+        }
+
+        private void timer1_Tick(object sender, EventArgs e)
+        {
+            if (audioFile != null)
+            {
+                labelCurrentTime.Text = TimeSpan.FromMilliseconds(trackBar1.Value).ToString(@"m\:ss");
+                trackBar1.Value = audioFile.CurrentTime.Milliseconds;
+                int value = (int)audioFile.CurrentTime.TotalMilliseconds;
+                trackBar1.Value = (value > trackBar1.Maximum) ? trackBar1.Maximum : value;
+                if (loopPlaylist)
                 {
-                    if (File.Exists(name))
-                        listBoxPliki.Items.Add(name);
+                    remaining -= 1000;
+                    labelPlaylistRemaining.Text = TimeSpan.FromMilliseconds(remaining).ToString(@"m\:ss");
                 }
-                plikiSystem = Directory.GetDirectories(@"C:\");
-                foreach (string name in plikiSystem)
+            }
+        }
+
+        private void trackBar1_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (outputDevice != null)
+            {
+                trackbarvalue1 = trackBar1.Value;
+                timer1.Stop();
+                outputDevice.Pause();
+            }
+        }
+
+        private void trackBar1_Scroll(object sender, EventArgs e)
+        {
+            labelCurrentTime.Left = trackBar1.Location.X + (trackBar1.Width - 28) * trackBar1.Value / trackBar1.Maximum;
+            labelCurrentTime.Text = TimeSpan.FromMilliseconds(trackBar1.Value).ToString(@"m\:ss");
+        }
+
+        private void trackBar1_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (outputDevice != null)
+            {
+                trackbarvalue2 = trackBar1.Value;
+                timer1.Start();
+                audioFile.Position = trackBar1.Value / 1000 * outputDevice.OutputWaveFormat.AverageBytesPerSecond;
+                if(buttonStart.Text == "||")
+                    outputDevice.Play();
+                labelCurrentTime.Left = 22;
+                remaining += trackbarvalue1 - trackbarvalue2;
+            }
+        }
+
+        public void playlistChanged()
+        {
+            if (plikiPlaylista != null)
+            {
+                totalPlaylist = 0;
+                foreach (string song in plikiPlaylista)
                 {
-                    if (Directory.Exists(name))
-                        listBoxFoldery.Items.Add(name);
+                    playlistTime = new AudioFileReader(song);
+                    totalPlaylist += (int)playlistTime.TotalTime.TotalMilliseconds;
+                    labelPlaylista.Text = TimeSpan.FromMilliseconds(totalPlaylist).ToString(@"m\:ss");
                 }
             }
         }
 
-        private void ListBoxFoldery_SelectedIndexChanged(object sender, EventArgs e)
+        private void Remaining()
         {
-            plikiSystem = Directory.GetFiles(listBoxFoldery.SelectedItem.ToString());
-            listBoxPliki.Items.Clear();
-            foreach (string name in plikiSystem)
+            remaining = 0;
+            for (int i = listBoxPlaylista.SelectedIndex; i <= listBoxPlaylista.Items.Count-1; i++)
             {
-                if (File.Exists(name))
-                    listBoxPliki.Items.Add(name);
-            }
-            plikiSystem = Directory.GetDirectories(listBoxFoldery.SelectedItem.ToString());
-
-            listBoxFoldery.Items.Clear();
-            foreach (string name in plikiSystem)
-            {
-                if (Directory.Exists(name))
-                    listBoxFoldery.Items.Add(name);
+                remainingAudioFile = new AudioFileReader(plikiPlaylista[i]);
+                remaining += (int)remainingAudioFile.TotalTime.TotalMilliseconds;
             }
         }
 
-        private void ListBoxPliki_SelectedIndexChanged(object sender, EventArgs e)
+        (double[] audio, int sampleRate) ReadWavMono(string filePath, double multiplier = 16_000)
         {
-            utwor = listBoxPliki.SelectedItem.ToString();
-            toolStripStatusLabel1.Text = Path.GetFileName(utwor);
-            if (playlista)
-            {
-                listBoxPlaylista.Items.Add(toolStripStatusLabel1.Text);
-                plikiPlaylista.Add(utwor);
-            }
-            else
-                buttonStart.PerformClick();
-            playlista = false;
-        }
-
-        private void ButtonWyszukaj_Click(object sender, EventArgs e)
-        {
-            utwor = textBoxUrl.Text;
-            toolStripStatusLabel1.Text = Path.GetFileName(utwor);
-            if (playlista)
-            {
-                listBoxPlaylista.Items.Add(toolStripStatusLabel1.Text);
-                plikiPlaylista.Add(utwor);
-            }
-            else
-                buttonStart.PerformClick();
-            playlista = false;
-        }
-
-        private void ButtonLosowo_Click(object sender, EventArgs e)
-        {
-            if (listBoxPlaylista.Items.Count > 0)
-            {
-                var rand = new Random();
-                if (losowe.Count == 0)
-                    losowe = Enumerable.Range(0, listBoxPlaylista.Items.Count).ToList();
-                int index = rand.Next(0, losowe.Count);
-                listBoxPlaylista.SelectedIndex = losowe[index];
-                losowe.RemoveAt(index);
-                buttonStart.PerformClick();
-            }
-        }
-
-        private void Form1_Click(object sender, EventArgs e)
-        {
-            listBoxPlaylista.ClearSelected();
-        }
-
-        private void ButtonUrl_Click(object sender, EventArgs e)
-        {
-            if (panelUrl.Visible)
-                panelUrl.Visible = false;
-            else
-                panelUrl.Visible = true;
-            panelSystem.Visible = false; panelHistoria.Visible = false;
+            var afr = new NAudio.Wave.AudioFileReader(filePath);
+            int sampleRate = afr.WaveFormat.SampleRate;
+            int bytesPerSample = afr.WaveFormat.BitsPerSample / 8;
+            int sampleCount = (int)(afr.Length / bytesPerSample);
+            int channelCount = afr.WaveFormat.Channels;
+            var audio = new List<double>(sampleCount);
+            var buffer = new float[sampleRate * channelCount];
+            int samplesRead = 0;
+            while ((samplesRead = afr.Read(buffer, 0, buffer.Length)) > 0)
+                audio.AddRange(buffer.Take(samplesRead).Select(x => x * multiplier));
+            return (audio.ToArray(), sampleRate);
         }
     }
 }
